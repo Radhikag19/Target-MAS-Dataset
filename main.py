@@ -22,6 +22,7 @@ Commands:
   python main.py live-smoke [--workflow <name>]
   python main.py launch-phoenix [--port 6006]
   python main.py validate-keys
+  python main.py ast-analyze [--output-dir <path>] [--json]
 """
 
 import sys
@@ -39,28 +40,45 @@ from common.settings import DATA_DIR, MANDATORY_MODEL
 from common.api_key_manager import validate_all_workflow_keys
 from common.tracing import setup_tracing, launch_phoenix_server
 
-# Workflows 1 to 7
-from Agents.invoice_processing.workflow import run_invoice_processing_workflow
-from Agents.customer_support.workflow import run_customer_support_workflow
-from Agents.procurement_supplier_selection.workflow import run_procurement_workflow
-from Agents.sales_lead_qualification.workflow import run_sales_lead_workflow
-from Agents.recruitment_screening.workflow import (
-    run_recruitment_screening_workflow,
-    load_sample_recruitment_input,
-)
-from Agents.inventory_replenishment.workflow import (
-    run_inventory_replenishment_workflow,
-    load_sample_inventory_input,
-)
-from Agents.contract_review.workflow import (
-    run_contract_review_workflow,
-    load_sample_contract_input,
-)
-
-# Workflows 8 to 10 (Meta_MAS suite)
-from Agents.incident_triage.workflow import run_incident_triage_workflow
-from Agents.expense_reimbursement.workflow import run_expense_workflow
-from Agents.market_research.workflow import run_market_research_workflow
+# Workflows 1 to 7 and 8 to 10 (Meta_MAS suite)
+try:
+    from Agents.invoice_processing.workflow import run_invoice_processing_workflow
+    from Agents.customer_support.workflow import run_customer_support_workflow
+    from Agents.procurement_supplier_selection.workflow import run_procurement_workflow
+    from Agents.sales_lead_qualification.workflow import run_sales_lead_workflow
+    from Agents.recruitment_screening.workflow import (
+        run_recruitment_screening_workflow,
+        load_sample_recruitment_input,
+    )
+    from Agents.inventory_replenishment.workflow import (
+        run_inventory_replenishment_workflow,
+        load_sample_inventory_input,
+    )
+    from Agents.contract_review.workflow import (
+        run_contract_review_workflow,
+        load_sample_contract_input,
+    )
+    from Agents.incident_triage.workflow import run_incident_triage_workflow
+    from Agents.expense_reimbursement.workflow import run_expense_workflow
+    from Agents.market_research.workflow import run_market_research_workflow
+    _WORKFLOW_IMPORTS_AVAILABLE = True
+    _WORKFLOW_IMPORT_ERROR = None
+except ImportError as err:
+    _WORKFLOW_IMPORTS_AVAILABLE = False
+    _WORKFLOW_IMPORT_ERROR = err
+    run_invoice_processing_workflow = None
+    run_customer_support_workflow = None
+    run_procurement_workflow = None
+    run_sales_lead_workflow = None
+    run_recruitment_screening_workflow = None
+    load_sample_recruitment_input = None
+    run_inventory_replenishment_workflow = None
+    load_sample_inventory_input = None
+    run_contract_review_workflow = None
+    load_sample_contract_input = None
+    run_incident_triage_workflow = None
+    run_expense_workflow = None
+    run_market_research_workflow = None
 
 
 def get_sample_incident(incident_id=None) -> dict:
@@ -255,6 +273,11 @@ def cmd_run(args):
     target = args.workflow.lower()
     if target not in WORKFLOW_CATALOG:
         print(f"Error: Unknown workflow '{target}'. Choose from: {list(WORKFLOW_CATALOG.keys())}")
+        sys.exit(1)
+
+    if not _WORKFLOW_IMPORTS_AVAILABLE:
+        print(f"\n[ERROR] Workflow execution runtime dependencies are missing: {_WORKFLOW_IMPORT_ERROR}")
+        print("Please ensure your environment has all requirements installed: pip install -r requirements.txt\n")
         sys.exit(1)
 
     wf_info = WORKFLOW_CATALOG[target]
@@ -457,6 +480,23 @@ def cmd_launch_phoenix(args):
         print("\n[AWO] Stopped Phoenix tracing server.")
 
 
+def cmd_ast_analyze(args):
+    from tools.ast_workflow_analyzer import ASTWorkflowAnalyzer, print_cli_summary
+    analyzer = ASTWorkflowAnalyzer()
+    out_dir = analyzer.export_reports(output_dir=Path(args.output_dir) if args.output_dir else None)
+    report_path = out_dir / "target_mas_ingestion_report.json"
+    with open(report_path, "r", encoding="utf-8") as f:
+        report = json.load(f)
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print_cli_summary(report)
+        print(f"Reports saved to: {out_dir}")
+        for p in sorted(out_dir.iterdir()):
+            if p.is_file():
+                print(f"  - {p.name} ({p.stat().st_size:,} bytes)")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Agentic Workflow Optimizer - Multi-Agent Workflows CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -464,6 +504,12 @@ def main():
     # List command
     parser_list = subparsers.add_parser("list", help="List all 10 baseline multi-agent workflows")
     parser_list.set_defaults(func=cmd_list)
+
+    # AST analysis command
+    p_ast = subparsers.add_parser("ast-analyze", help="Run static AST analysis across all 10 workflows")
+    p_ast.add_argument("--output-dir", help="Optional custom directory to export reports")
+    p_ast.add_argument("--json", action="store_true", help="Print raw JSON report to stdout")
+    p_ast.set_defaults(func=cmd_ast_analyze)
 
     # Run command
     parser_run = subparsers.add_parser("run", help="Run a specific workflow")
